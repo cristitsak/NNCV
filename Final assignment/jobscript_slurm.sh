@@ -6,4 +6,4 @@
 #SBATCH --partition=gpu_a100
 #SBATCH --time=04:00:00
 
-srun apptainer exec --nv --env-file .env container.sif /bin/bash main.sh
+srun apptainer exec --nv --env WANDB_API_KEY=$WANDB_API_KEY --env-file .env container.sif /bin/bash main.sh

@@ -4,12 +4,8 @@
 #SBATCH --cpus-per-task=9
 #SBATCH --gpus=1
 #SBATCH --partition=gpu_mig
-#SBATCH --time=3:00:00
+#SBATCH --time=04:00:00  # More time for training
 
-# Pull container from dockerhub
-apptainer pull container.sif docker://cclaess/5lsm0:v1
-
-# Use the huggingface-cli package inside the container to download the data
-mkdir -p data
-apptainer exec container.sif \
-    huggingface-cli download TimJaspersTue/5LSM0 --local-dir ./data --repo-type dataset
+# Run your actual training python code
+apptainer exec --nv container.sif \
+    python train.py --data_dir ./data
