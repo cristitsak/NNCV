@@ -1,0 +1,6 @@
+# Ignore the dataset
+cifar-10-python/
+data/
+
+# Ignore notebook junk
+.ipynb_checkpoints/

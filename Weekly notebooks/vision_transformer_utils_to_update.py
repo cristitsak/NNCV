@@ -118,13 +118,30 @@ class Attention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
-        B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            B, N, C = x.shape  # Batch size, Number of tokens, Embedding dim
+            
+            # 1. Project to Query, Key, and Value
+            # We project the input into 3 times its dimension, then reshape for multi-head
+            qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            q, k, v = qkv[0], qkv[1], qkv[2]  # Split into individual Q, K, V tensors
 
-        #TODO: complete the forward pass
-        # q, k, v = 
-        
-        return x, attn
+            # 2. Scaled Dot-Product Attention
+            # Calculate scores: (Q @ K^T) * scale
+            attn = (q @ k.transpose(-2, -1)) * self.scale
+            
+            # Normalize scores with Softmax
+            attn = attn.softmax(dim=-1)
+            attn = self.attn_drop(attn)
+
+            # 3. Combine with Values
+            # (Scores @ V) -> Reshape back to original sequence format
+            x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+            
+            # 4. Final linear projection and dropout
+            x = self.proj(x)
+            x = self.proj_drop(x)
+
+            return x, attn  # Returns both the result and the weights for the test
 
 
 class Block(nn.Module):
@@ -201,13 +218,23 @@ class PatchEmbed(nn.Module):
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
 
     def forward(self, x):
-        B, C, H, W = x.shape
-        
-        # TODO: Complete the forward pass
-        # x =
+            B, C, H, W = x.shape
+            # Ensure input dimensions match expectations
+            assert H == self.img_size and W == self.img_size, \
+                f"Input image size ({H}x{W}) doesn't match model ({self.img_size}x{self.img_size})."
 
-        return x
+            # 1. Project: (B, 3, 224, 224) -> (B, embed_dim, 14, 14)
+            x = self.proj(x)
 
+            # 2. Flatten: (B, embed_dim, 14, 14) -> (B, embed_dim, 196)
+            # We flatten the spatial dimensions (H, W) into one 'sequence' dimension
+            x = x.flatten(2)
+
+            # 3. Transpose: (B, embed_dim, 196) -> (B, 196, embed_dim)
+            # Standard Transformers expect the sequence length as the second dimension
+            x = x.transpose(1, 2)
+
+            return x
 
 class VisionTransformer(nn.Module):
     """ Vision Transformer """
@@ -277,6 +304,7 @@ class VisionTransformer(nn.Module):
 
         # add the [CLS] token to the embed patch tokens
         cls_tokens = self.cls_token.expand(B, -1, -1)
+        print(cls_tokens.shape, x.shape)
         x = torch.cat((cls_tokens, x), dim=1)
 
         # add positional encoding to each token
