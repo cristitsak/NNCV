@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
+FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -14,7 +14,7 @@ WORKDIR /app
 # Install the exact same "Sunday-safe" versions we used for training
 RUN pip install --no-cache-dir \
     "numpy<2.0.0" \
-    "torchvision>=0.15.0" \
+    "torchvision>=0.16.0" \
     "segmentation-models-pytorch" \
     "albumentations" \
     "opencv-python-headless<4.10" \
