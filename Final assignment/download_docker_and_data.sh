@@ -8,4 +8,4 @@
 
 # Run your actual training python code
 apptainer exec --nv container.sif \
-    python train.py --data_dir ./data
+    # python train.py --data_dir ./data
