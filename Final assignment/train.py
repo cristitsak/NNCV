@@ -91,19 +91,21 @@ def main(args):
     # Define the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Define the transforms to apply to the data
+    # Inside main(args) in train.py:
+
     img_transform = Compose([
-    ToImage(),
-    Resize((256, 256)),
-    ToDtype(torch.float32, scale=True),
-    Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ToImage(),
+        # Increase this! Peak performance needs at least 512x1024 or 1024x1024
+        Resize((512, 1024)), 
+        ToDtype(torch.float32, scale=True),
+        # REQUIRED: Use ImageNet/SegFormer normalization constants
+        Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), 
     ])
 
-    # Target transform (mask)
     target_transform = Compose([
         ToImage(),
-        Resize((256, 256), interpolation=InterpolationMode.NEAREST),
-        ToDtype(torch.int64),  # no scaling
+        Resize((512, 1024), interpolation=InterpolationMode.NEAREST), # Match img size
+        ToDtype(torch.int64),
     ])
 
     # Load the dataset and make a split for training and validation

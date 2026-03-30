@@ -1,72 +1,51 @@
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
+from transformers import SegformerForSemanticSegmentation
 
 class Model(nn.Module):
-    """ 
-    A simple U-Net architecture for image segmentation.
-    Based on the U-Net architecture from the original paper:
-    Olaf Ronneberger et al. (2015), "U-Net: Convolutional Networks for Biomedical Image Segmentation"
-    https://arxiv.org/pdf/1505.04597.pdf
-
-    Adapt this model as needed for your problem-specific requirements. You can make multiple model classes and compare them,
-    however, the CodaLab server requires the model class to be named "Model". Also, it will use the default values of the constructor
-    to create the model, so make sure to set the default values of the constructor to the ones you want to use for your submission.
+    """
+    Peak Performance Model using NVIDIA's SegFormer.
+    This replaces the vanilla U-Net with a Transformer-based architecture.
     """
     def __init__(
         self, 
         in_channels=3, 
-        n_classes=19
+        n_classes=19,
+        model_name="nvidia/segformer-b1-finetuned-cityscapes-1024-1024"
     ):
-        """
-        Args:
-            in_channels (int): Number of input channels. Default is 3 for RGB images.
-            n_classes (int): Number of output classes. Default is 19 for the Cityscapes dataset.
-        """
-        
         super().__init__()
-
-        # Encoding path
-        self.in_channels = in_channels
-        self.inc = (DoubleConv(in_channels, 64))
-        self.down1 = (Down(64, 128))
-        self.down2 = (Down(128, 256))
-        self.down3 = (Down(256, 512))
-        self.down4 = (Down(512, 512))
-
-        # Decoding path
-        self.up1 = (Up(1024, 256))
-        self.up2 = (Up(512, 128))
-        self.up3 = (Up(256, 64))
-        self.up4 = (Up(128, 64))
-        self.outc = (OutConv(64, n_classes))
+        
+        # Load the pre-trained SegFormer from Hugging Face
+        # We use 'ignore_mismatched_sizes' to ensure it adapts to our n_classes
+        self.segformer = SegformerForSemanticSegmentation.from_pretrained(
+            model_name,
+            num_labels=n_classes,
+            ignore_mismatched_sizes=True
+        )
 
     def forward(self, x):
         """
-        Forward pass through the model.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, in_channels, height, width).
+        Forward pass for SegFormer.
+        Input: (Batch, 3, H, W)
+        Output: (Batch, n_classes, H, W)
         """
-        # Check if the input tensor has the expected number of channels
-        if x.shape[1] != self.in_channels:
-            raise ValueError(f"Expected {self.in_channels} input channels, but got {x.shape[1]}")
+        # SegFormer expects the argument 'pixel_values'
+        outputs = self.segformer(pixel_values=x)
         
-        # Encoding path
-        x1 = self.inc(x)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x5 = self.down4(x4)
-
-        # Decoding path
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
-        logits = self.outc(x)
-
-        return logits
+        # SegFormer returns logits that are 1/4 of the input resolution
+        logits = outputs.logits 
+        
+        # We MUST upscale the logits back to the original input size 
+        # so the loss function in train.py can compare them to the masks.
+        upsampled_logits = F.interpolate(
+            logits, 
+            size=x.shape[-2:], # Takes (H, W) from input tensor
+            mode="bilinear", 
+            align_corners=False
+        )
+        
+        return upsampled_logits
         
 
 class DoubleConv(nn.Module):
