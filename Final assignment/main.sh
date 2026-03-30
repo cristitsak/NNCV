@@ -6,7 +6,8 @@ export PYTHONPATH=$PYTHONPATH:/home/scur2428/.local/lib/python3.10/site-packages
 export WANDB_DIR="./wandb_logs"
 
 # 3. Force install libraries
-pip install --user --no-cache-dir "numpy<2.0.0" "wandb==0.12.21" "segmentation-models-pytorch" "albumentations" "opencv-python-headless<4.10"
+# Update line 9 in main.sh to include transformers
+pip install --user --no-cache-dir "numpy<2.0.0" "wandb==0.12.21" "segmentation-models-pytorch" "albumentations" "opencv-python-headless<4.10" "transformers"
 
 # 4. Run the training
 python3 train.py \
@@ -16,4 +17,4 @@ python3 train.py \
     --lr 0.00006 \
     --num-workers 10 \
     --seed 42 \
-    --experiment-id "unet-training"
+    --experiment-id "segformer-b0-training"

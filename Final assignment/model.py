@@ -12,7 +12,7 @@ class Model(nn.Module):
         self, 
         in_channels=3, 
         n_classes=19,
-        model_name="nvidia/segformer-b1-finetuned-cityscapes-1024-1024"
+        model_name="nvidia/segformer-b0-finetuned-cityscapes-1024-1024"
     ):
         super().__init__()
         
