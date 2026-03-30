@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import LambdaLR
 from torchvision.datasets import Cityscapes
 from torchvision.utils import make_grid
 from torchvision.transforms.v2 import (
@@ -31,6 +32,7 @@ from torchvision.transforms.v2 import (
     InterpolationMode
 )
 
+import segmentation_models_pytorch as smp
 from model import Model
 
 
@@ -146,11 +148,34 @@ def main(args):
         n_classes=19,  # 19 classes in the Cityscapes dataset
     ).to(device)
 
-    # Define the loss function
-    criterion = nn.CrossEntropyLoss(ignore_index=255)  # Ignore the void class
+    # 1. Standard Pixel-wise Cross Entropy
+    ce_loss = nn.CrossEntropyLoss(ignore_index=255)
+
+    # 2. Dice Loss (Great for boundaries and small objects)
+    dice_loss = smp.losses.DiceLoss(mode='multiclass', ignore_index=255)
+
+    # 3. The Combo Function
+    def criterion(preds, targets):
+        return (0.4 * ce_loss(preds, targets)) + (0.6 * dice_loss(preds, targets))
 
     # Define the optimizer
     optimizer = AdamW(model.parameters(), lr=args.lr)
+
+    # 1. Configuration
+    total_steps = len(train_dataloader) * args.epochs
+    warmup_steps = int(total_steps * 0.1)  # 10% of training is warmup
+
+    def lr_lambda(current_step):
+        if current_step < warmup_steps:
+            # Linear Warmup: 0.1, 0.2, ..., 1.0
+            return float(current_step) / float(max(1, warmup_steps))
+        else:
+            # Linear Decay: 1.0 down to 0.0
+            progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+            return max(0.0, 1.0 - progress)
+
+    # 2. Initialize Scheduler
+    scheduler = LambdaLR(optimizer, lr_lambda)
 
     # Training loop
     best_valid_loss = float('inf')
@@ -168,6 +193,7 @@ def main(args):
             labels = labels.long().squeeze(1)  # Remove channel dimension
 
             optimizer.zero_grad()
+            scheduler.step()
             outputs = model(images)
             loss = criterion(outputs, labels)
             loss.backward()
