@@ -180,30 +180,38 @@ def main(args):
     # Training loop
     best_valid_loss = float('inf')
     current_best_model_path = None
+    scaler = torch.cuda.amp.GradScaler()
+
     for epoch in range(args.epochs):
         print(f"Epoch {epoch+1:04}/{args.epochs:04}")
+
 
         # Training
         model.train()
         for i, (images, labels) in enumerate(train_dataloader):
-
-            labels = convert_to_train_id(labels)  # Convert class IDs to train IDs
+            labels = convert_to_train_id(labels)
             images, labels = images.to(device), labels.to(device)
+            labels = labels.long().squeeze(1)
 
-            labels = labels.long().squeeze(1)  # Remove channel dimension
+            # A. Clear gradients BEFORE the forward/backward pass
+            optimizer.zero_grad() 
 
-            optimizer.zero_grad()
+            # B. Forward pass
+            with torch.amp.autocast('cuda'):                
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+
+            # C. Backward pass (scales the loss)
+            scaler.scale(loss).backward()  
+
+            # D. Update weights (unscales gradients first automatically)
+            scaler.step(optimizer)
+            scaler.update()
+
+            # E. Update Learning Rate (The Last Step)
             scheduler.step()
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
 
-            wandb.log({
-                "train_loss": loss.item(),
-                "learning_rate": optimizer.param_groups[0]['lr'],
-                "epoch": epoch + 1,
-            }, step=epoch * len(train_dataloader) + i)
+            wandb.log({"train_loss": loss.item(), "lr": scheduler.get_last_lr()[0]})
             
         # Validation
         model.eval()

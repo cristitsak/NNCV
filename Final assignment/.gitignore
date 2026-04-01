@@ -8,3 +8,6 @@ data/
 *.jpg
 test_results/
 wandb/
+
+*.pt
+checkpoints/

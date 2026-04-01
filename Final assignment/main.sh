@@ -12,9 +12,9 @@ pip install --user --no-cache-dir "numpy<2.0.0" "wandb==0.12.21" "segmentation-m
 # 4. Run the training
 python3 train.py \
     --data-dir ./data \
-    --batch-size 4 \
-    --epochs 3 \
-    --lr 0.000006 \
+    --batch-size 8 \
+    --epochs 60 \
+    --lr 0.0001 \
     --num-workers 10 \
     --seed 42 \
-    --experiment-id "segformer-b5-training"
+    --experiment-id "segformer-b3-training"
