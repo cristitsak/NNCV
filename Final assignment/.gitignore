@@ -11,3 +11,8 @@ wandb/
 
 *.pt
 checkpoints/
+
+# SegFormer weights and configs
+segformer_*_config/
+*.safetensors
+*.bin
