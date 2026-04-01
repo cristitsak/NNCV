@@ -1,278 +1,344 @@
 """
-This script implements a training loop for the model. It is designed to be flexible, 
-allowing you to easily modify hyperparameters using a command-line argument parser.
-
-### Key Features:
-1. **Hyperparameter Tuning:** Adjust hyperparameters by parsing arguments from the `main.sh` script or directly 
-   via the command line.
-2. **Remote Execution Support:** Since this script runs on a server, training progress is not visible on the console. 
-   To address this, we use the `wandb` library for logging and tracking progress and results.
-3. **Encapsulation:** The training loop is encapsulated in a function, enabling it to be called from the main block. 
-   This ensures proper execution when the script is run directly.
-
-Feel free to customize the script as needed for your use case.
+Main training script for robust Cityscapes segmentation using SegFormer.
+Implements advanced techniques for robustness including:
+- OHEM loss focusing on hard pixels
+- Multi-scale training
+- Gradient clipping
+- Learning rate warmup with cosine annealing
+- Weight decay scheduling
 """
+
 import os
+import sys
+import numpy as np
 from argparse import ArgumentParser
 
 import wandb
 import torch
-import torch.nn as nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import LambdaLR
+from torch.cuda.amp import GradScaler
 from torchvision.datasets import Cityscapes
-from torchvision.utils import make_grid
-from torchvision.transforms.v2 import (
-    Compose,
-    Normalize,
-    Resize,
-    ToImage,
-    ToDtype,
-    InterpolationMode
-)
 
-import segmentation_models_pytorch as smp
 from model import Model
-
-
-# Mapping class IDs to train IDs
-id_to_trainid = {cls.id: cls.train_id for cls in Cityscapes.classes}
-def convert_to_train_id(label_img: torch.Tensor) -> torch.Tensor:
-    return label_img.apply_(lambda x: id_to_trainid[x])
-
-# Mapping train IDs to color
-train_id_to_color = {cls.train_id: cls.color for cls in Cityscapes.classes if cls.train_id != 255}
-train_id_to_color[255] = (0, 0, 0)  # Assign black to ignored labels
-
-def convert_train_id_to_color(prediction: torch.Tensor) -> torch.Tensor:
-    batch, _, height, width = prediction.shape
-    color_image = torch.zeros((batch, 3, height, width), dtype=torch.uint8)
-
-    for train_id, color in train_id_to_color.items():
-        mask = prediction[:, 0] == train_id
-
-        for i in range(3):
-            color_image[:, i][mask] = color[i]
-
-    return color_image
+from helpers import (
+    convert_to_train_id,
+    convert_train_id_to_color,
+    RobustCombinedLoss,
+    get_train_transforms,
+    get_val_transforms,
+    get_target_transforms,
+    MultiScaleTransform,
+    create_scheduler,
+    WeightDecayScheduler,
+    compute_iou,
+    save_checkpoint,
+    load_checkpoint
+)
 
 
 def get_args_parser():
-
-    parser = ArgumentParser("Training script for a PyTorch U-Net model")
-    parser.add_argument("--data-dir", type=str, default="./data", help="Path to the training data")
-    parser.add_argument("--batch-size", type=int, default=64, help="Training batch size")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
-    parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
-    parser.add_argument("--num-workers", type=int, default=10, help="Number of workers for data loaders")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
-    parser.add_argument("--experiment-id", type=str, default="unet-training", help="Experiment ID for Weights & Biases")
-
+    """Parse command line arguments."""
+    parser = ArgumentParser("Robustness-focused training for Cityscapes segmentation")
+    
+    # Basic arguments
+    parser.add_argument("--data-dir", type=str, default="./data", help="Path to Cityscapes dataset")
+    parser.add_argument("--batch-size", type=int, default=8, help="Training batch size")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
+    parser.add_argument("--lr", type=float, default=6e-5, help="Base learning rate")
+    parser.add_argument("--num-workers", type=int, default=10, help="Data loader workers")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--experiment-id", type=str, default="segformer-robustness", help="WandB experiment name")
+    
+    # Robustness-specific arguments
+    parser.add_argument("--use-ohem", action='store_true', default=True, help="Use OHEM loss")
+    parser.add_argument("--ohem-ratio", type=float, default=0.3, help="Ratio of hardest pixels to keep")
+    parser.add_argument("--label-smoothing", type=float, default=0.05, help="Label smoothing factor")
+    parser.add_argument("--use-multi-scale", action='store_true', default=True, help="Use multi-scale training")
+    parser.add_argument("--use-gradient-clipping", action='store_true', default=True, help="Use gradient clipping")
+    parser.add_argument("--grad-clip-norm", type=float, default=1.0, help="Gradient clipping norm")
+    parser.add_argument("--use-weight-decay-decay", action='store_true', default=True, help="Decay weight decay")
+    parser.add_argument("--warmup-epochs", type=int, default=10, help="Number of warmup epochs")
+    parser.add_argument("--resume-from", type=str, default=None, help="Resume training from checkpoint")
+    
     return parser
 
 
 def main(args):
-    # Initialize wandb for logging
+    """Main training function."""
+    
+    # Initialize wandb
     wandb.init(
-        project="5lsm0-cityscapes-segmentation",  # Project name in wandb
-        name=args.experiment_id,  # Experiment name in wandb
-        config=vars(args),  # Save hyperparameters
+        project="cityscapes-segmentation-robustness",
+        name=args.experiment_id,
+        config=vars(args),
     )
-
-    # Create output directory if it doesn't exist
+    
+    # Create output directory
     output_dir = os.path.join("checkpoints", args.experiment_id)
     os.makedirs(output_dir, exist_ok=True)
-
-    # Set seed for reproducability
-    # If you add other sources of randomness (NumPy, Random), 
-    # make sure to set their seeds as well
+    
+    # Set seeds for reproducibility
     torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
     torch.backends.cudnn.deterministic = True
-
-    # Define the device
+    torch.backends.cudnn.benchmark = True
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Inside main(args) in train.py:
-
-    img_transform = Compose([
-        ToImage(),
-        # Increase this! Peak performance needs at least 512x1024 or 1024x1024
-        Resize((512, 1024)), 
-        ToDtype(torch.float32, scale=True),
-        # REQUIRED: Use ImageNet/SegFormer normalization constants
-        Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), 
-    ])
-
-    target_transform = Compose([
-        ToImage(),
-        Resize((512, 1024), interpolation=InterpolationMode.NEAREST), # Match img size
-        ToDtype(torch.int64),
-    ])
-
-    # Load the dataset and make a split for training and validation
+    print(f"Using device: {device}")
+    
+    # ========== DATA LOADING ==========
+    print("Loading datasets...")
+    
     train_dataset = Cityscapes(
-    args.data_dir,
-    split="train",
-    mode="fine",
-    target_type="semantic",
-    transform=img_transform,
-    target_transform=target_transform,
+        args.data_dir,
+        split="train",
+        mode="fine",
+        target_type="semantic",
+        transform=get_train_transforms(),
+        target_transform=get_target_transforms(),
     )
-
+    
     valid_dataset = Cityscapes(
         args.data_dir,
         split="val",
         mode="fine",
         target_type="semantic",
-        transform=img_transform,
-        target_transform=target_transform,
+        transform=get_val_transforms(),
+        target_transform=get_target_transforms(),
     )
-
+    
     train_dataloader = DataLoader(
-        train_dataset, 
-        batch_size=args.batch_size, 
+        train_dataset,
+        batch_size=args.batch_size,
         shuffle=True,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        pin_memory=True,
+        persistent_workers=True
     )
+    
     valid_dataloader = DataLoader(
-        valid_dataset, 
-        batch_size=args.batch_size, 
+        valid_dataset,
+        batch_size=args.batch_size,
         shuffle=False,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        pin_memory=True,
+        persistent_workers=True
     )
-
-    # Define the model
+    
+    print(f"Train samples: {len(train_dataset)}, Val samples: {len(valid_dataset)}")
+    
+    # ========== MODEL ==========
+    print("Initializing model...")
     model = Model(
-        in_channels=3,  # RGB images
-        n_classes=19,  # 19 classes in the Cityscapes dataset
+        in_channels=3,
+        n_classes=19,
     ).to(device)
-
-    # 1. Standard Pixel-wise Cross Entropy
-    ce_loss = nn.CrossEntropyLoss(ignore_index=255)
-
-    # 2. Dice Loss (Great for boundaries and small objects)
-    dice_loss = smp.losses.DiceLoss(mode='multiclass', ignore_index=255)
-
-    # 3. The Combo Function
-    def criterion(preds, targets):
-        return (0.4 * ce_loss(preds, targets)) + (0.6 * dice_loss(preds, targets))
-
-    # Define the optimizer
-    optimizer = AdamW(model.parameters(), lr=args.lr)
-
-    # 1. Configuration
-    total_steps = len(train_dataloader) * args.epochs
-    warmup_steps = int(total_steps * 0.1)  # 10% of training is warmup
-
-    def lr_lambda(current_step):
-        if current_step < warmup_steps:
-            # Linear Warmup: 0.1, 0.2, ..., 1.0
-            return float(current_step) / float(max(1, warmup_steps))
-        else:
-            # Linear Decay: 1.0 down to 0.0
-            progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-            return max(0.0, 1.0 - progress)
-
-    # 2. Initialize Scheduler
-    scheduler = LambdaLR(optimizer, lr_lambda)
-
-    # Training loop
+    
+    # ========== LOSS FUNCTION ==========
+    criterion = RobustCombinedLoss(
+        ce_weight=0.5,
+        dice_weight=0.5,
+        label_smoothing=args.label_smoothing,
+        ohem_ratio=args.ohem_ratio,
+        use_ohem=args.use_ohem
+    )
+    
+    # ========== OPTIMIZER ==========
+    # Layer-wise learning rates: backbone lower, head higher
+    optimizer = AdamW([
+        {"params": model.segformer.segformer.parameters(), "lr": args.lr},
+        {"params": model.segformer.decode_head.parameters(), "lr": args.lr * 5},
+    ], weight_decay=0.01)
+    
+    # ========== SCHEDULERS ==========
+    scheduler = create_scheduler(
+        optimizer,
+        epochs=args.epochs,
+        warmup_epochs=args.warmup_epochs,
+        min_lr=1e-7
+    )
+    
+    wd_scheduler = None
+    if args.use_weight_decay_decay:
+        wd_scheduler = WeightDecayScheduler(optimizer, initial_wd=0.01, final_wd=1e-5)
+    
+    # ========== MIXED PRECISION ==========
+    scaler = GradScaler()
+    
+    # ========== MULTI-SCALE TRANSFORM ==========
+    multi_scale = MultiScaleTransform() if args.use_multi_scale else None
+    
+    # ========== RESUME TRAINING ==========
+    start_epoch = 0
     best_valid_loss = float('inf')
-    current_best_model_path = None
-    scaler = torch.cuda.amp.GradScaler()
-
-    for epoch in range(args.epochs):
-        print(f"Epoch {epoch+1:04}/{args.epochs:04}")
-
-
-        # Training
+    best_valid_miou = 0.0
+    
+    if args.resume_from and os.path.exists(args.resume_from):
+        print(f"Resuming from {args.resume_from}")
+        checkpoint = load_checkpoint(args.resume_from, model, optimizer, scheduler, device)
+        start_epoch = checkpoint['epoch'] + 1
+        best_valid_loss = checkpoint.get('val_loss', float('inf'))
+        best_valid_miou = checkpoint.get('val_miou', 0.0)
+        print(f"Resumed from epoch {start_epoch}, best mIoU: {best_valid_miou:.4f}")
+    
+    # ========== TRAINING LOOP ==========
+    print("Starting training...")
+    global_step = start_epoch * len(train_dataloader)
+    
+    for epoch in range(start_epoch, args.epochs):
+        print(f"Epoch {epoch+1:04}/{args.epochs:04} \n")
+        
+        # ---------- Training Phase ----------
         model.train()
+        train_losses = []
+        
         for i, (images, labels) in enumerate(train_dataloader):
+            # Apply multi-scale if enabled
+            if multi_scale is not None:
+                images, labels = multi_scale(images, labels)
+            
+            # Convert labels to train IDs
             labels = convert_to_train_id(labels)
             images, labels = images.to(device), labels.to(device)
             labels = labels.long().squeeze(1)
-
-            # A. Clear gradients BEFORE the forward/backward pass
-            optimizer.zero_grad() 
-
-            # B. Forward pass
-            with torch.amp.autocast('cuda'):                
+            
+            optimizer.zero_grad()
+            
+            # Forward pass with mixed precision
+            with torch.cuda.amp.autocast():
                 outputs = model(images)
                 loss = criterion(outputs, labels)
-
-            # C. Backward pass (scales the loss)
-            scaler.scale(loss).backward()  
-
-            # D. Update weights (unscales gradients first automatically)
+            
+            # Backward pass
+            scaler.scale(loss).backward()
+            
+            # Gradient clipping
+            if args.use_gradient_clipping:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), 
+                    max_norm=args.grad_clip_norm
+                )
+            
             scaler.step(optimizer)
             scaler.update()
-
-            # E. Update Learning Rate (The Last Step)
-            scheduler.step()
-
-            wandb.log({"train_loss": loss.item(), "lr": scheduler.get_last_lr()[0]})
             
-        # Validation
+            train_losses.append(loss.item())
+            
+            # Log training metrics
+            wandb.log({
+                "train/loss": loss.item(),
+                "train/lr": scheduler.get_last_lr()[0],
+                "epoch": epoch,
+            }, step=global_step)
+            
+            global_step += 1
+            
+            # Print progress
+            if (i + 1) % 50 == 0:
+                print(f"  Batch {i+1}/{len(train_dataloader)} | Loss: {loss.item():.4f}")
+        
+        # Update weight decay scheduler
+        if wd_scheduler is not None:
+            wd_scheduler.step(epoch)
+        
+        avg_train_loss = np.mean(train_losses)
+        
+        # ---------- Validation Phase ----------
         model.eval()
+        val_losses = []
+        all_preds = []
+        all_labels = []
+        
+        print("\nValidating...")
         with torch.no_grad():
-            losses = []
             for i, (images, labels) in enumerate(valid_dataloader):
-
-                labels = convert_to_train_id(labels)  # Convert class IDs to train IDs
+                labels = convert_to_train_id(labels)
                 images, labels = images.to(device), labels.to(device)
-
-                labels = labels.long().squeeze(1)  # Remove channel dimension
-
+                labels = labels.long().squeeze(1)
+                
                 outputs = model(images)
                 loss = criterion(outputs, labels)
-                losses.append(loss.item())
-            
-                if i == 0:
-                    predictions = outputs.softmax(1).argmax(1)
-
-                    predictions = predictions.unsqueeze(1)
-                    labels = labels.unsqueeze(1)
-
-                    predictions = convert_train_id_to_color(predictions)
-                    labels = convert_train_id_to_color(labels)
-
-                    predictions_img = make_grid(predictions.cpu(), nrow=8)
-                    labels_img = make_grid(labels.cpu(), nrow=8)
-
-                    predictions_img = predictions_img.permute(1, 2, 0).numpy()
-                    labels_img = labels_img.permute(1, 2, 0).numpy()
-
+                val_losses.append(loss.item())
+                
+                predictions = outputs.softmax(1).argmax(1)
+                all_preds.append(predictions.cpu())
+                all_labels.append(labels.cpu())
+                
+                # Log sample images every epoch
+                if i == 0 and (epoch + 1) % 10 == 0:
+                    pred_vis = convert_train_id_to_color(predictions.unsqueeze(1).cpu())
+                    label_vis = convert_train_id_to_color(labels.unsqueeze(1).cpu())
+                    
+                    # Denormalize images for visualization
+                    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+                    std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+                    orig_imgs = (images.cpu() * std + mean).clamp(0, 1)
+                    
                     wandb.log({
-                        "predictions": [wandb.Image(predictions_img)],
-                        "labels": [wandb.Image(labels_img)],
-                    }, step=(epoch + 1) * len(train_dataloader) - 1)
-            
-            valid_loss = sum(losses) / len(losses)
-            wandb.log({
-                "valid_loss": valid_loss
-            }, step=(epoch + 1) * len(train_dataloader) - 1)
-
-            if valid_loss < best_valid_loss:
-                best_valid_loss = valid_loss
-                if current_best_model_path:
-                    os.remove(current_best_model_path)
-                current_best_model_path = os.path.join(
-                    output_dir, 
-                    f"best_model-epoch={epoch:04}-val_loss={valid_loss:04}.pt"
-                )
-                torch.save(model.state_dict(), current_best_model_path)
+                        "val/sample_input": wandb.Image(orig_imgs[0].permute(1, 2, 0).numpy()),
+                        "val/sample_prediction": wandb.Image(pred_vis[0].permute(1, 2, 0).numpy()),
+                        "val/sample_ground_truth": wandb.Image(label_vis[0].permute(1, 2, 0).numpy()),
+                    }, step=global_step - 1)
         
+        # Calculate metrics
+        avg_val_loss = np.mean(val_losses)
+        all_preds = torch.cat(all_preds)
+        all_labels = torch.cat(all_labels)
+        ious = compute_iou(all_preds, all_labels)
+        avg_miou = np.nanmean(ious)
+        
+        # Log class-wise IoU
+        class_names = [cls.name for cls in Cityscapes.classes if cls.train_id not in [-1, 255]]
+        iou_dict = {}
+        for i, name in enumerate(class_names):
+            if not np.isnan(ious[i]):
+                iou_dict[f"val/iou_{name}"] = ious[i]
+        
+        wandb.log({
+            "val/loss": avg_val_loss,
+            "val/miou": avg_miou,
+            **iou_dict,
+            "epoch": epoch,
+        }, step=global_step - 1)
+        
+        print(f"\nTrain Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | mIoU: {avg_miou:.4f}")
+        
+        # Save best model
+        if avg_val_loss < best_valid_loss:
+            best_valid_loss = avg_val_loss
+            best_valid_miou = avg_miou
+            
+            checkpoint_path = os.path.join(
+                output_dir,
+                f"best_model-epoch={epoch+1:04}-miou={avg_miou:.4f}.pt"
+            )
+            save_checkpoint(model, optimizer, scheduler, epoch, avg_val_loss, avg_miou, checkpoint_path)
+            
+            wandb.log({
+                "best/val_loss": best_valid_loss,
+                "best/val_miou": best_valid_miou,
+                "best/epoch": epoch + 1,
+            })
+            
+            print(f"New best model saved! mIoU: {avg_miou:.4f}")
+        
+        # Update scheduler
+        scheduler.step()
+        
+        # Save periodic checkpoint
+        if (epoch + 1) % 10 == 0:
+            checkpoint_path = os.path.join(
+                output_dir,
+                f"checkpoint-epoch={epoch+1:04}.pt"
+            )
+            save_checkpoint(model, optimizer, scheduler, epoch, avg_val_loss, avg_miou, checkpoint_path)
+    
     print("Training complete!")
-
-    # Save the model
-    torch.save(
-        model.state_dict(),
-        os.path.join(
-            output_dir,
-            f"final_model-epoch={epoch:04}-val_loss={valid_loss:04}.pt"
-        )
-    )
+    print(f"Best validation mIoU: {best_valid_miou:.4f}")
+    print(f"Best validation loss: {best_valid_loss:.4f}")
+    
     wandb.finish()
 
 
