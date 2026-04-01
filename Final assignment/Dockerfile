@@ -11,18 +11,26 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Install the exact same "Sunday-safe" versions we used for training
+# Install the exact same versions we used for training
 RUN pip install --no-cache-dir \
     "numpy<2.0.0" \
     "torchvision>=0.16.0" \
     "segmentation-models-pytorch" \
     "albumentations" \
     "opencv-python-headless<4.10" \
-    "wandb==0.12.21"
+    "transformers==4.30.2" \
+    "tqdm"
+
+# --- THE "AIR-GAP" FIX ---
+# Copy the local config folder you created with save_model.py
+COPY segformer_b3_config /app/segformer_b3_config
 
 # Copy your code and the TRAINED model weights
 COPY predict.py /app/predict.py
 COPY model.py /app/model.py
 COPY model.pt /app/model.pt
+
+# Ensure the output directory exists inside the container
+RUN mkdir -p /output
 
 ENTRYPOINT ["python", "/app/predict.py"]
