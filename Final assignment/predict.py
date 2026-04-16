@@ -18,7 +18,8 @@ from model import Model
 IMAGE_DIR = "/data"
 OUTPUT_DIR = "/output"
 MODEL_PATH = "/app/model.pt"
-CONFIG_PATH = "/app/segformer_b3_config"  # Add this
+CONFIG_PATH = "nvidia/segformer-b3-finetuned-cityscapes-1024-1024"
+# "/app/segformer_b3_config"  # Add this
 
 
 def preprocess(img: Image.Image) -> torch.Tensor:

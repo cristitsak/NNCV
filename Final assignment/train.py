@@ -43,10 +43,10 @@ def get_args_parser():
     
     # Basic arguments
     parser.add_argument("--data-dir", type=str, default="./data", help="Path to Cityscapes dataset")
-    parser.add_argument("--batch-size", type=int, default=8, help="Training batch size")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
-    parser.add_argument("--lr", type=float, default=6e-5, help="Base learning rate")
-    parser.add_argument("--num-workers", type=int, default=10, help="Data loader workers")
+    parser.add_argument("--batch-size", type=int, default=2, help="Training batch size")
+    parser.add_argument("--epochs", type=int, default=60, help="Number of training epochs")
+    parser.add_argument("--lr", type=float, default=4e-5, help="Base learning rate")
+    parser.add_argument("--num-workers", type=int, default=8, help="Data loader workers")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--experiment-id", type=str, default="segformer-robustness", help="WandB experiment name")
     
@@ -85,10 +85,8 @@ def main(args):
     torch.backends.cudnn.benchmark = True
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
     
     # ========== DATA LOADING ==========
-    print("Loading datasets...")
     
     train_dataset = Cityscapes(
         args.data_dir,
@@ -125,14 +123,11 @@ def main(args):
         pin_memory=True,
         persistent_workers=True
     )
-    
-    print(f"Train samples: {len(train_dataset)}, Val samples: {len(valid_dataset)}")
-    
+        
     # ========== MODEL ==========
-    print("Initializing model...")
     model = Model(
-        in_channels=3,
         n_classes=19,
+        config_path="nvidia/segformer-b3-finetuned-cityscapes-1024-1024"
     ).to(device)
     
     # ========== LOSS FUNCTION ==========
@@ -164,8 +159,8 @@ def main(args):
         wd_scheduler = WeightDecayScheduler(optimizer, initial_wd=0.01, final_wd=1e-5)
     
     # ========== MIXED PRECISION ==========
-    scaler = GradScaler()
-    
+    scaler = torch.amp.GradScaler('cuda')    
+
     # ========== MULTI-SCALE TRANSFORM ==========
     multi_scale = MultiScaleTransform() if args.use_multi_scale else None
     
@@ -175,15 +170,12 @@ def main(args):
     best_valid_miou = 0.0
     
     if args.resume_from and os.path.exists(args.resume_from):
-        print(f"Resuming from {args.resume_from}")
         checkpoint = load_checkpoint(args.resume_from, model, optimizer, scheduler, device)
         start_epoch = checkpoint['epoch'] + 1
         best_valid_loss = checkpoint.get('val_loss', float('inf'))
         best_valid_miou = checkpoint.get('val_miou', 0.0)
-        print(f"Resumed from epoch {start_epoch}, best mIoU: {best_valid_miou:.4f}")
     
     # ========== TRAINING LOOP ==========
-    print("Starting training...")
     global_step = start_epoch * len(train_dataloader)
     
     for epoch in range(start_epoch, args.epochs):
@@ -206,7 +198,7 @@ def main(args):
             optimizer.zero_grad()
             
             # Forward pass with mixed precision
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
             
@@ -226,18 +218,13 @@ def main(args):
             
             train_losses.append(loss.item())
             
-            # Log training metrics
-            wandb.log({
-                "train/loss": loss.item(),
-                "train/lr": scheduler.get_last_lr()[0],
-                "epoch": epoch,
-            }, step=global_step)
-            
+            if (global_step + 1) % 50 == 0:
+                wandb.log({
+                    "train/loss": loss.item(),
+                    "train/lr": scheduler.get_last_lr()[0],
+                }, step=global_step)
+        
             global_step += 1
-            
-            # Print progress
-            if (i + 1) % 50 == 0:
-                print(f"  Batch {i+1}/{len(train_dataloader)} | Loss: {loss.item():.4f}")
         
         # Update weight decay scheduler
         if wd_scheduler is not None:
@@ -266,21 +253,18 @@ def main(args):
                 all_preds.append(predictions.cpu())
                 all_labels.append(labels.cpu())
                 
-                # Log sample images every epoch
-                if i == 0 and (epoch + 1) % 10 == 0:
+                if i == 0 and (epoch + 1) % 5 == 0:
                     pred_vis = convert_train_id_to_color(predictions.unsqueeze(1).cpu())
                     label_vis = convert_train_id_to_color(labels.unsqueeze(1).cpu())
-                    
-                    # Denormalize images for visualization
                     mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
                     std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
                     orig_imgs = (images.cpu() * std + mean).clamp(0, 1)
-                    
-                    wandb.log({
+
+                    wandb.log({  # ✅ actually log the images
                         "val/sample_input": wandb.Image(orig_imgs[0].permute(1, 2, 0).numpy()),
                         "val/sample_prediction": wandb.Image(pred_vis[0].permute(1, 2, 0).numpy()),
                         "val/sample_ground_truth": wandb.Image(label_vis[0].permute(1, 2, 0).numpy()),
-                    }, step=global_step - 1)
+                    }, step=global_step)
         
         # Calculate metrics
         avg_val_loss = np.mean(val_losses)
@@ -299,9 +283,8 @@ def main(args):
         wandb.log({
             "val/loss": avg_val_loss,
             "val/miou": avg_miou,
-            **iou_dict,
             "epoch": epoch,
-        }, step=global_step - 1)
+        }, step=global_step)
         
         print(f"\nTrain Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | mIoU: {avg_miou:.4f}")
         
@@ -310,17 +293,14 @@ def main(args):
             best_valid_loss = avg_val_loss
             best_valid_miou = avg_miou
             
-            checkpoint_path = os.path.join(
-                output_dir,
-                f"best_model-epoch={epoch+1:04}-miou={avg_miou:.4f}.pt"
-            )
+            checkpoint_path = os.path.join(output_dir, "best_model.pt")
             save_checkpoint(model, optimizer, scheduler, epoch, avg_val_loss, avg_miou, checkpoint_path)
             
             wandb.log({
                 "best/val_loss": best_valid_loss,
                 "best/val_miou": best_valid_miou,
                 "best/epoch": epoch + 1,
-            })
+            }, step=global_step)
             
             print(f"New best model saved! mIoU: {avg_miou:.4f}")
         

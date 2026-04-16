@@ -9,4 +9,7 @@
 #SBATCH --mem=64G
 #SBATCH --output=slurm-%j.out
 
+# Fixes memory fragmentation issues on A100
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 srun apptainer exec --nv --env-file .env container_v2.sif /bin/bash main.sh

@@ -3,6 +3,7 @@
 # 1. Setup Python paths
 export PYTHONPATH=$PYTHONPATH:/home/scur2428/.local/lib/python3.10/site-packages
 export WANDB_DIR="./wandb_logs"
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # 2. Smart Install: Only install if 'transformers' is missing
 # This saves time and avoids "Externally Managed Environment" errors on some nodes
@@ -21,9 +22,9 @@ fi
 # Make sure your train.py is set up to save 'model.pt' at the end
 python3 train.py \
     --data-dir ./data \
-    --batch-size 8 \
+    --batch-size 2 \
     --epochs 60 \
-    --lr 6e-5 \
-    --num-workers 10 \
+    --lr 4e-5 \
+    --num-workers 8 \
     --seed 42 \
-    --experiment-id "segformer-b3-training"
+    --experiment-id "robust-segformer-b3-training"
