@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from transformers import SegformerForSemanticSegmentation
 
 class Model(nn.Module):
-    def __init__(self, n_classes=19, config_path="nvidia/segformer-b3-finetuned-cityscapes-1024-1024"):
+    def __init__(self, n_classes=19, config_path="/app/segformer_b3_config"):
         super().__init__()
         
         # "/app/segformer_b3_config"
@@ -13,9 +13,10 @@ class Model(nn.Module):
         #     raise FileNotFoundError(f"Config path not found: {config_path}")
         
         self.segformer = SegformerForSemanticSegmentation.from_pretrained(
-            config_path, 
+            "/app/segformer_b3_config", 
             num_labels=n_classes,
-            ignore_mismatched_sizes=True
+            ignore_mismatched_sizes=True,
+            local_files_only=True  # CRITICAL: prevents internet calls
         )
 
     def forward(self, x):
