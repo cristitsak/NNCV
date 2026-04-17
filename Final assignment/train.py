@@ -25,6 +25,7 @@ from helpers import (
     convert_to_train_id,
     convert_train_id_to_color,
     RobustCombinedLoss,
+    compute_class_weights,
     get_train_transforms,
     get_val_transforms,
     get_target_transforms,
@@ -131,12 +132,17 @@ def main(args):
     ).to(device)
     
     # ========== LOSS FUNCTION ==========
+    # Compute inverse-frequency class weights to focus on rare classes
+    # (rider, train, motorcycle, traffic light, etc.)
+    class_weights = compute_class_weights(device=device)
+    
     criterion = RobustCombinedLoss(
-        ce_weight=0.5,
-        dice_weight=0.5,
+        ce_weight=0.4,       # reduced: CE alone is noisy on edges
+        dice_weight=0.6,     # increased: Dice captures shape/boundary better
         label_smoothing=args.label_smoothing,
         ohem_ratio=args.ohem_ratio,
-        use_ohem=args.use_ohem
+        use_ohem=args.use_ohem,
+        class_weights=class_weights,
     )
     
     # ========== OPTIMIZER ==========
@@ -218,10 +224,13 @@ def main(args):
             
             train_losses.append(loss.item())
             
-            if (global_step + 1) % 50 == 0:
+            # Log every 50 BATCHES (not global steps) with the batch-level step
+            # Using global_step as the x-axis keeps train and val on the same timeline
+            if i % 50 == 0:
                 wandb.log({
-                    "train/loss": loss.item(),
-                    "train/lr": scheduler.get_last_lr()[0],
+                    "train/batch_loss": loss.item(),
+                    "train/lr_backbone": optimizer.param_groups[0]['lr'],
+                    "train/lr_head": optimizer.param_groups[1]['lr'],
                 }, step=global_step)
         
             global_step += 1
@@ -231,6 +240,14 @@ def main(args):
             wd_scheduler.step(epoch)
         
         avg_train_loss = np.mean(train_losses)
+        
+        # Log epoch-level training summary — this is the reliable number to watch
+        wandb.log({
+            "train/epoch_loss": avg_train_loss,
+            "train/lr_backbone": optimizer.param_groups[0]['lr'],
+            "train/lr_head": optimizer.param_groups[1]['lr'],
+            "epoch": epoch,
+        }, step=global_step)
         
         # ---------- Validation Phase ----------
         model.eval()
@@ -260,7 +277,7 @@ def main(args):
                     std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
                     orig_imgs = (images.cpu() * std + mean).clamp(0, 1)
 
-                    wandb.log({  # ✅ actually log the images
+                    wandb.log({
                         "val/sample_input": wandb.Image(orig_imgs[0].permute(1, 2, 0).numpy()),
                         "val/sample_prediction": wandb.Image(pred_vis[0].permute(1, 2, 0).numpy()),
                         "val/sample_ground_truth": wandb.Image(label_vis[0].permute(1, 2, 0).numpy()),
@@ -283,7 +300,7 @@ def main(args):
         wandb.log({
             "val/loss": avg_val_loss,
             "val/miou": avg_miou,
-            "epoch": epoch,
+            **iou_dict,
         }, step=global_step)
         
         print(f"\nTrain Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | mIoU: {avg_miou:.4f}")
