@@ -27,6 +27,7 @@ COPY segformer_b3_config /app/segformer_b3_config
 
 # Copy your code and the TRAINED model weights
 COPY predict.py /app/predict.py
+COPY helpers.py /app/helpers.py
 COPY model.py /app/model.py
 COPY model.pt /app/model.pt
 
