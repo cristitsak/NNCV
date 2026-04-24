@@ -4,7 +4,6 @@ data/
 *.out
 
 # Ignore all generated images and results
-*.png
 *.jpg
 test_results/
 wandb/
