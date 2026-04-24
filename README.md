@@ -1,6 +1,10 @@
 # Cityscapes Robust Semantic Segmentation
 This repository contains a robust semantic segmentation pipeline developed for the Neural Networks and Computer Vision (NNCV) course. It focuses on the Cityscapes dataset, utilizing a SegFormer-B3 architecture with advanced training techniques to improve robustness against rare classes and varying urban conditions.
 
+## Student Information
+* **TU/e Email:** c.tsakloglou@student.tue.nl
+* **Leaderboard Username:** Chris_SegLoss2.0 (Peak Preformance) & Chris_Seg_Rob (Robustness)
+
 ## Project Structure
 **predict.py**: The main inference script for the submission container.
 
@@ -16,7 +20,6 @@ This repository contains a robust semantic segmentation pipeline developed for t
 
 ### Setup and Execution
 
-
 ## 1. Environment & Installation
 
 This project requires **Python 3.10+** and an **NVIDIA GPU with CUDA support**.
@@ -24,7 +27,6 @@ This project requires **Python 3.10+** and an **NVIDIA GPU with CUDA support**.
 ```bash
 pip install torch torchvision numpy pillow transformers segmentation-models-pytorch wandb
 ```
-
 
 ## 2. Data Preprocessing
 
@@ -38,8 +40,6 @@ The pipeline ensures consistency between training and inference using a standard
   * **Std:** `[0.229, 0.224, 0.225]`
 
 * **Target Handling:** Labels are automatically converted from raw Cityscapes IDs to the **19 standard training classes**. Ignored pixels are assigned index `255`.
-
-
 
 ## 3. Training on the Supercomputer
 
@@ -70,6 +70,7 @@ srun apptainer exec --nv --env-file .env container_v2.sif /bin/bash main.sh
 ```
 
 Example `main.sh`
+
 The `main.sh` script triggers `train.py` with hyperparameters optimized for the A100 environment:
 ```
 python train.py \
@@ -94,6 +95,81 @@ cp "checkpoints/segformer-robustness/best_model.pt" "./model.pt"
 ### Step 2: Build and run the container
 
 This simulates the official evaluation environment.
+
+> **Note:** Output images may appear nearly black because they contain raw integer class IDs (`0–18`) instead of RGB color values.
+
+```bash
+# Build the submission image
+docker build -t nncv-submission:latest .
+
+# Run inference on local data
+docker run --rm \
+  -v "$(pwd)/local_data:/data" \
+  -v "$(pwd)/local_output:/output" \
+  nncv-submission:latest
+```
+
+
+
+## Setup and Execution
+
+
+## 1. Environment & Installation
+
+This project requires **Python 3.10+** and an **NVIDIA GPU with CUDA support**.
+
+```bash
+pip install torch torchvision numpy pillow transformers segmentation-models-pytorch wandb
+```
+
+
+## 2. Data Preprocessing
+
+The pipeline ensures consistency between training and inference using a standardized flow defined in `helpers.py`:
+
+* **Resolution:** Input images are resized to **512×1024** using bilinear interpolation to balance detail with memory efficiency.
+
+* **Normalization:** Images are scaled using standard ImageNet statistics:
+
+  * **Mean:** `[0.485, 0.456, 0.406]`
+  * **Std:** `[0.229, 0.224, 0.225]`
+
+* **Target Handling:** Labels are automatically converted from raw Cityscapes IDs to the **19 standard training classes**. Ignored pixels are assigned index `255`.
+
+## 3. Training the Model
+
+The training script uses several robustness features, including:
+
+* **Online Hard Example Mining (OHEM)**
+* **Multi-scale training**
+* **Inverse-Frequency Class Weighting**
+
+These improve performance, especially on rare object classes.
+
+## 4. Local Docker Testing (Submission Simulation)
+
+Before submitting, move your trained weights into the main directory so the Docker container can locate them.
+
+This command copies your best-performing model and renames it to `model.pt`.
+
+### Step 1: Copy the weights into the root folder
+
+```bash
+cp "checkpoints/segformer-robustness/best_model.pt" "./model.pt"
+```
+
+### Step 2: Build and run the container
+
+The provided `Dockerfile` defines the full submission environment, including all required dependencies and the inference entrypoint. It also copies the inference source files and trained weights into the container:
+
+```dockerfile
+COPY predict.py /app/predict.py
+COPY helpers.py /app/helpers.py
+COPY model.py /app/model.py
+COPY model.pt /app/model.pt
+```
+
+*This simulates the official evaluation environment.*
 
 > **Note:** Output images may appear nearly black because they contain raw integer class IDs (`0–18`) instead of RGB color values.
 
