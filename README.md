@@ -3,7 +3,11 @@ This repository contains a robust semantic segmentation pipeline developed for t
 
 ## Student Information
 * **TU/e Email:** c.tsakloglou@student.tue.nl
-* **Leaderboard Username:** Chris_SegLoss2.0, Chris_Rob (Peak Preformance) & Chris_SegRob2.0, Chris_SegRob (Robustness)
+
+| Benchmark         | Submission Metrics  | Secondary Evaluation|
+|------------------|--------------------|--------------------------|
+| Peak Performance | `Chris_SegLoss2.0` | `Chris_Rob`             |
+| Robustness       | `Chris_SegRob2.0`  | `Chris_SegRob`          |
 
 ## Project Structure
 **predict.py**: The main inference script for the submission container.
@@ -21,7 +25,7 @@ This repository contains a robust semantic segmentation pipeline developed for t
 
 **local_output_/**: Results generated from different trained network architectures (e.g., UNet, SegFormer_without_augmentation, SegFormer_with_augmentation, SegFormer_overfitted).
 
-### Setup and Execution
+## Setup and Execution
 
 ## 1. Environment & Installation
 
@@ -107,6 +111,7 @@ cp "checkpoints/segformer-robustness/best_model.pt" "./model.pt"
 
 This simulates the official evaluation environment.
 
+> **Note:** The `local_data` folder should contain the test images downloaded from the Cityscapes test set.  
 > **Note:** Output images may appear nearly black because they contain raw integer class IDs (`0–18`) instead of RGB color values.
 
 ```bash
@@ -118,4 +123,3 @@ docker run --rm \
   -v "$(pwd)/local_data:/data" \
   -v "$(pwd)/local_output:/output" \
   nncv-submission:latest
-```
