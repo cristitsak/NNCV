@@ -3,11 +3,10 @@ This repository contains a robust semantic segmentation pipeline developed for t
 
 ## Student Information
 * **TU/e Email:** c.tsakloglou@student.tue.nl
-
-| Benchmark         | Submission Metrics  | Secondary Evaluation|
-|------------------|--------------------|--------------------------|
-| Peak Performance | `Chris_SegLoss2.0` | `Chris_Rob`             |
-| Robustness       | `Chris_SegRob2.0`  | `Chris_SegRob`          |
+| Benchmark         | Submission Model (Proposed) | Reference Model (For Comparison) |
+|------------------|-----------------------------|----------------------------------|
+| Peak Performance | `Chris_SegLoss2.0`         | `Chris_Rob`                      |
+| Robustness       | `Chris_SegRob2.0`          | `Chris_SegRob`                   |
 
 ## Project Structure
 **predict.py**: The main inference script for the submission container.
