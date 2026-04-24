@@ -177,3 +177,9 @@ cython_debug/
 
 *.pt
 checkpoints/
+
+# Local documentation fragments
+README-Installation.md
+README-Report.md
+README-Slurm.md
+README-Submission.md
