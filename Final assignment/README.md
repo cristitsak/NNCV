@@ -1,109 +1,85 @@
-# Cityscapes Robust Semantic Segmentation
-This repository contains a robust semantic segmentation pipeline developed for the Neural Networks and Computer Vision (NNCV) course. It focuses on the Cityscapes dataset, utilizing a SegFormer-B3 architecture with advanced training techniques to improve robustness against rare classes and varying urban conditions.
+# Final Assignment: Cityscape Challenge  
 
-## Project Structure
-**predict.py**: The main inference script for the submission container.
+Welcome to the **Cityscape Challenge**, the final project for this course!  
 
-**model.py**: Defines the Model class wrapping the SegformerForSemanticSegmentation architecture.
+In this assignment, you'll put your knowledge of Neural Networks (NNs) for computer vision into action by tackling real-world problems using the **CityScapes dataset**. This dataset contains large-scale, high-quality images of urban environments, making it perfect for tasks like **semantic segmentation** and **object detection**.  
 
-**helpers.py**: Critical component containing custom loss functions, data augmentations, class weighting logic and all training modifications.
+This challenge is designed to push your skills further, focusing on practical and often under-explored issues crucial for deploying computer vision models in real-world scenarios.  
 
-**train.py**: Comprehensive training script with mixed-precision support and WandB integration.
+---
 
-**segformer_b3_config/**: Local directory containing the pre-trained model configuration and manually saved weights to ensure execution without internet access for Snelius Supercomputer.
+## Benchmarks  
 
-**local_output_.../**: Results generated from different trained network architectures (e.g., UNet, SegFormer_without_augmentation, SegFormer_with_augmentation, SegFormer_overfitted).
+The competition comprises four benchmarks, each targeting a specific aspect of model performance:  
 
-### Setup and Execution
+1. **Peak performance**  
+   This benchmark evaluates your model's segmentation accuracy on a clean, standardized test set. Your goal is to achieve the highest segmentation scores here. **Everyone should submit a model to this benchmark optimized for maximum performance**. However, it's crucial to implement changes thoughtfully and be able to justify them in your research paper. Ultimately, the focus should be on the scientific contributions of your adaptations rather than solely aiming for the highest score.
 
+The following benchmarks 2–4 are optional, and **you should select one** to compare against the Peak Performance benchmark. This allows you to analyze how your model performs under different conditions and gain deeper insights beyond just optimizing for the highest score.
 
-## 1. Environment & Installation
+2. **Robustness**  
+   This benchmark tests how well your model performs under challenging conditions, such as changes in lighting, weather, or image quality. Consistency is key in this category.  
 
-This project requires **Python 3.10+** and an **NVIDIA GPU with CUDA support**.
+3. **Efficiency**  
+   Practical applications often require compact models. This benchmark emphasizes creating smaller models that maintain acceptable performance. It’s particularly relevant for edge devices where large models are infeasible.  
 
-```bash
-pip install torch torchvision numpy pillow transformers segmentation-models-pytorch wandb
-```
+4. **Out-of-distribution detection**  
+   Models often encounter data that differs from the training distribution, leading to unreliable predictions. This benchmark evaluates your model's ability to detect and handle such out-of-distribution samples.  
 
+> **IMPORTANT NOTE**: The **Peak Permomance** benchmark will also serve as the baseline server, and all participants must submit a baseline model here. This means that you can just train the already provided model in the repo. The training code for this model is also already provided. The baseline submission serves two purposes: ensuring that everyone is familiar with working on an HPC cluster and providing a reference point for evaluating the impact of different adaptations in your other benchmark submissions (you need to show these improvements compared to the baseline in your report!). The Baseline benchmark will close on **Tuesday, March 17, at 11:59 P.M. (GMT+1)**. To avoid last-minute issues, start preparing your submission early. This will also give you time to ask questions during the scheduled computer classes if needed.
 
-## 2. Data Preprocessing
+---
 
-The pipeline ensures consistency between training and inference using a standardized flow defined in `helpers.py`:
+## Deliverables  
 
-* **Resolution:** Input images are resized to **512×1024** using bilinear interpolation to balance detail with memory efficiency.
+Your final submission will consist of the following:  
 
-* **Normalization:** Images are scaled using standard ImageNet statistics:
+### 1. Research paper  
+Write a **3-4 page research paper** in [IEEE double-column format](https://www.overleaf.com/latex/templates/ieee-conference-template/grfzhhncsfqn), addressing (at least) the following:  
 
-  * **Mean:** `[0.485, 0.456, 0.406]`
-  * **Std:** `[0.229, 0.224, 0.225]`
+- **Abstract**: Summarize the current problems, your key steps for addressing them and your main findings in about 100-300 words.
+- **Introduction**: Present the problem, challenges, and potential solutions based on existing literature.  
+- **Methods**: Describe your dataset(s), outline the baseline approach using an off-the-shelf segmentation model and define the enhancements you made for the specific benchmarks you participated.  
+- **Results**: Show and describe your results based on performance metrics and examples. Use figures and tables to support your findings. 
+- **Discussion**: Discuss the impact and potential of your main findings. Also discuss limitations and suggest future improvements.
 
-* **Target Handling:** Labels are automatically converted from raw Cityscapes IDs to the **19 standard training classes**. Ignored pixels are assigned index `255`.
+> **Submission**: Submit your paper as a PDF document via **Canvas**.
 
+The paper will be graded based on clarity, experimental design, insight, and originality.  
 
+### 2. Code repository  
+Push all relevant code to a **public GitHub repository** with a README.md file detailing:  
+- Required libraries and installation instructions.  
+- Steps to run your code.  
+- Your Codalab username and TU/e email address for correct mapping across systems.  
 
-## 3. Training on the Supercomputer
+### 3. Challenge platform submissions  
+The Cityscape Challenge will be hosted on a **dedicated course compute platform** (instead of Codalab used in previous years).
 
-Submit the job to the cluster scheduler using a batch script.
+You will receive clear, step-by-step instructions for making submission once the final assignment begins.
 
-```bash
-sbatch jobscript_slurm.sh
-```
+---
 
-Example `jobscript_slurm.sh`:
+## Grading and Bonus Points  
 
-```bash
-#!/bin/bash
-#SBATCH --job-name=segformer_b3_train
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --gpus=1
-#SBATCH --partition=gpu_a100
-#SBATCH --time=10:00:00
-#SBATCH --mem=64G
-#SBATCH --output=slurm-%j.out
+The final assignment accounts for **50% of your course grade**. Additionally, bonus points are available:  
 
-# Fixes memory fragmentation issues on A100
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+- **Top 3 in any benchmark**: +0.25 to your final assignment grade.  
+- **Best performance in any benchmark**: +0.5 to your final assignment grade.  
 
-srun apptainer exec --nv --env-file .env container_v2.sif /bin/bash main.sh
-```
+For example, achieving the best performance in 'Peak Performance' and a top 3 spot in another benchmark will earn you a 0.75 bonus.  
 
-Example `main.sh`
-The `main.sh` script triggers `train.py` with hyperparameters optimized for the A100 environment:
-```
-python train.py \
-    --batch-size 2 \
-    --epochs 60 \
-    --lr 0.00004 \
-    --experiment-id "segformer-robustness-final" \
-    --num-workers 8
-```
-## 4. Local Docker Testing
+> **Note**: The bonus is optional. A great report with an innovative solution that doesn't rank highly can still earn a perfect score (10).  
 
-Before submitting, move your trained weights into the main directory so the Docker container can locate them.
+---
 
-This command copies your best-performing model and renames it to `model.pt`.
+## Important Notes  
 
-### Step 1: Copy the weights into the root folder
+- Ensure a proper **train-validation split** of the CityScapes dataset.  
+- Training your model may take multiple hours; plan accordingly.  
+- Use ideas from literature but remember to **cite all sources**. Plagiarism will not be tolerated.  
+- For questions or challenges, use the **Discussions** section of this repository to collaborate with peers.  
 
-```bash
-cp "checkpoints/segformer-robustness/best_model.pt" "./model.pt"
-```
+---
 
-### Step 2: Build and run the container
-
-This simulates the official evaluation environment.
-
-> **Note:** Output images may appear nearly black because they contain raw integer class IDs (`0–18`) instead of RGB color values.
-
-```bash
-# Build the submission image
-docker build -t nncv-submission:latest .
-
-# Run inference on local data
-docker run --rm \
-  -v "$(pwd)/local_data:/data" \
-  -v "$(pwd)/local_output:/output" \
-  nncv-submission:latest
-```
+We wish you the best of luck in this challenge and are excited to see the innovative solutions you develop! 🚀

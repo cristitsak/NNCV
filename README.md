@@ -1,45 +1,109 @@
-# 5LSM0: Neural Networks for Computer Vision
+# Cityscapes Robust Semantic Segmentation
+This repository contains a robust semantic segmentation pipeline developed for the Neural Networks and Computer Vision (NNCV) course. It focuses on the Cityscapes dataset, utilizing a SegFormer-B3 architecture with advanced training techniques to improve robustness against rare classes and varying urban conditions.
 
-Welcome to the repository for **5LSM0: Neural Networks for Computer Vision**, a course offered by the Department of Electrical Engineering at Eindhoven University of Technology. This course is hosted by the [Architectures for Relaible Image Analysis Lab](https://github.com/TUE-ARIA).
+## Project Structure
+**predict.py**: The main inference script for the submission container.
 
-## Overview
+**model.py**: Defines the Model class wrapping the SegformerForSemanticSegmentation architecture.
 
-This repository contains all the assignments and supplementary materials for the course. The weekly assignments are designed as **Jupyter Notebooks**, providing practical, hands-on experience with the concepts discussed during lectures. These notebooks will help you gain familiarity with implementing neural networks using **PyTorch** in **Python**. For the final assignment, you will apply the knowledge gained throughout the course by coding in native Python and working with a compute cluster, providing valuable experience in real-world computational environments.
+**helpers.py**: Critical component containing custom loss functions, data augmentations, class weighting logic and all training modifications.
 
-### Weekly Assignments
+**train.py**: Comprehensive training script with mixed-precision support and WandB integration.
 
-The weekly assignments are structured to guide you through foundational and advanced topics in neural networks for computer vision. These assignments are:
-- **Optional**: They are not mandatory but serve as valuable practice to build your coding skills.
-- **Hands-On**: Focused on applying theoretical knowledge from the lectures into real-world implementations.
+**segformer_b3_config/**: Local directory containing the pre-trained model configuration and manually saved weights to ensure execution without internet access for Snelius Supercomputer.
 
-### Final Assignment
+**local_output_.../**: Results generated from different trained network architectures (e.g., UNet, SegFormer_without_augmentation, SegFormer_with_augmentation, SegFormer_overfitted).
 
-The **final assignment** is the cornerstone of this course and accounts for **50% of your final grade**. In this project, you will:
-1. Work on a real-world problem using the **CityScapes dataset**.
-2. Train neural networks and validate their performance against established baselines.
-3. Document your results and insights in a detailed report.
+### Setup and Execution
 
-This final assignment requires a deeper dive into the subject, pushing you to apply the knowledge and skills gained throughout the course.
 
-The final assignment will start in week 3 (February 24th), once all core lectures have been completed, ensuring you have the necessary foundation to work on the project.
+## 1. Environment & Installation
 
-## Authors and Contact
+This project requires **Python 3.10+** and an **NVIDIA GPU with CUDA support**.
 
-This course material is developed and maintained by the following contributors:  
+```bash
+pip install torch torchvision numpy pillow transformers segmentation-models-pytorch wandb
+```
 
-- **Cris H.B. Claessens**  
-  Email: [c.h.b.claessens@tue.nl](mailto:c.h.b.claessens@tue.nl)  
 
-- **Tim J.M. Jaspers**  
-  Email: [t.j.m.jaspers@tue.nl](mailto:t.j.m.jaspers@tue.nl)
+## 2. Data Preprocessing
 
-- **Francisco De Espírito Santo e Caetano**  
-  Email: [f.t.de.espirito.santo.e.caetano@tue.nl](mailto:f.t.de.espirito.santo.e.caetano@tue.nl)
+The pipeline ensures consistency between training and inference using a standardized flow defined in `helpers.py`:
 
-- **Lemar Abdi**  
-  Email: [l.abdi@tue.nl](mailto:l.abdi@tue.nl)
+* **Resolution:** Input images are resized to **512×1024** using bilinear interpolation to balance detail with memory efficiency.
 
-- **dr. Christiaan G.A. Viviers**  
-  Email: [c.g.a.vivers@tue.nl](mailto:c.g.a.vivers@tue.nl)
+* **Normalization:** Images are scaled using standard ImageNet statistics:
 
-If you have questions or need assistance, you can always reach out to us via email. However, we strongly encourage you to post your questions in the **Discussions** section of this GitHub repository. This way, other students can benefit from the conversations and contribute by helping each other out.
+  * **Mean:** `[0.485, 0.456, 0.406]`
+  * **Std:** `[0.229, 0.224, 0.225]`
+
+* **Target Handling:** Labels are automatically converted from raw Cityscapes IDs to the **19 standard training classes**. Ignored pixels are assigned index `255`.
+
+
+
+## 3. Training on the Supercomputer
+
+Submit the job to the cluster scheduler using a batch script.
+
+```bash
+sbatch jobscript_slurm.sh
+```
+
+Example `jobscript_slurm.sh`:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=segformer_b3_train
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --gpus=1
+#SBATCH --partition=gpu_a100
+#SBATCH --time=10:00:00
+#SBATCH --mem=64G
+#SBATCH --output=slurm-%j.out
+
+# Fixes memory fragmentation issues on A100
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+srun apptainer exec --nv --env-file .env container_v2.sif /bin/bash main.sh
+```
+
+Example `main.sh`
+The `main.sh` script triggers `train.py` with hyperparameters optimized for the A100 environment:
+```
+python train.py \
+    --batch-size 2 \
+    --epochs 60 \
+    --lr 0.00004 \
+    --experiment-id "segformer-robustness-final" \
+    --num-workers 8
+```
+## 4. Local Docker Testing
+
+Before submitting, move your trained weights into the main directory so the Docker container can locate them.
+
+This command copies your best-performing model and renames it to `model.pt`.
+
+### Step 1: Copy the weights into the root folder
+
+```bash
+cp "checkpoints/segformer-robustness/best_model.pt" "./model.pt"
+```
+
+### Step 2: Build and run the container
+
+This simulates the official evaluation environment.
+
+> **Note:** Output images may appear nearly black because they contain raw integer class IDs (`0–18`) instead of RGB color values.
+
+```bash
+# Build the submission image
+docker build -t nncv-submission:latest .
+
+# Run inference on local data
+docker run --rm \
+  -v "$(pwd)/local_data:/data" \
+  -v "$(pwd)/local_output:/output" \
+  nncv-submission:latest
+```
